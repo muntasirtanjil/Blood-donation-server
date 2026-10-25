@@ -35,15 +35,29 @@ async function connectDB() {
 app.get("/", (req, res) => {
     res.send("LifeDrop blood donation website server is cooking!");
 });
-//  read donors data 
-
-// Get all donors
+// Get public donor information
 app.get("/donors", async (req, res) => {
     try {
-        const donors = await bloodDonationCollection.find().toArray();
+        const donors = await bloodDonationCollection
+            .find({})
+            .project({
+                _id: 1,
+                name: 1,
+                bloodGroup: 1,
+                district: 1,
+                upazila: 1,
+                number: 1,
+                available: 1,
+            })
+            .toArray();
+
         res.send(donors);
     } catch (error) {
-        res.status(500).send({ message: "Failed to get donors" });
+        console.error("Failed to get donors:", error);
+
+        res.status(500).send({
+            message: "Failed to get donors",
+        });
     }
 });
 // Donor data save
@@ -61,6 +75,92 @@ app.post("/donors", async (req, res) => {
     } catch (error) {
         console.error(error);
         res.status(500).send({ message: "Failed to save donor" });
+    }
+});
+
+// Get donor profile by Firebase UID
+app.get("/donors/uid/:uid", async (req, res) => {
+    try {
+        const uid = req.params.uid;
+
+        const donor = await bloodDonationCollection.findOne({ uid: uid });
+
+        if (!donor) {
+            return res.status(404).send({
+                message: "Donor profile not found",
+            });
+        }
+
+        res.send(donor);
+    } catch (error) {
+        console.error(error);
+        res.status(500).send({
+            message: "Failed to get donor profile",
+        });
+    }
+});
+
+// Update donor profile
+app.patch("/donors/uid/:uid", async (req, res) => {
+    try {
+        const uid = req.params.uid;
+
+        const { name, number, bloodGroup, district, upazila } = req.body;
+
+        const result = await bloodDonationCollection.updateOne(
+            { uid: uid },
+            {
+                $set: {
+                    name,
+                    number,
+                    bloodGroup,
+                    district,
+                    upazila,
+                },
+            }
+        );
+
+        if (result.matchedCount === 0) {
+            return res.status(404).send({
+                message: "Donor profile not found",
+            });
+        }
+
+        res.send({
+            success: true,
+            message: "Profile updated successfully",
+        });
+    } catch (error) {
+        console.error(error);
+        res.status(500).send({
+            message: "Failed to update profile",
+        });
+    }
+});
+
+// Delete account
+app.delete("/donors/uid/:uid", async (req, res) => {
+    try {
+        const { uid } = req.params;
+
+        const result = await bloodDonationCollection.deleteOne({ uid });
+
+        if (result.deletedCount === 0) {
+            return res.status(404).send({
+                message: "Donor profile not found",
+            });
+        }
+
+        res.send({
+            success: true,
+            message: "Donor profile deleted successfully",
+        });
+    } catch (error) {
+        console.error("Delete account error:", error);
+
+        res.status(500).send({
+            message: "Failed to delete donor profile",
+        });
     }
 });
 
