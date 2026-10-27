@@ -46,12 +46,14 @@ app.use(async (req, res, next) => {
         next();
     } catch (error) {
         console.error("MongoDB connection failed:", error);
+
         res.status(503).send({
             message: "Database temporarily unavailable",
         });
     }
 });
 
+// Server status
 app.get("/", (req, res) => {
     res.send("LifeDrop blood donation website server is running!");
 });
@@ -63,6 +65,7 @@ app.get("/donors", async (req, res) => {
             .find({})
             .project({
                 _id: 1,
+                uid: 1,
                 name: 1,
                 bloodGroup: 1,
                 district: 1,
@@ -75,20 +78,53 @@ app.get("/donors", async (req, res) => {
         res.send(donors);
     } catch (error) {
         console.error("Failed to get donors:", error);
-        res.status(500).send({ message: "Failed to get donors" });
+
+        res.status(500).send({
+            message: "Failed to get donors",
+        });
     }
 });
 
-// Save donor data
+// Save new donor
 app.post("/donors", async (req, res) => {
     try {
-        const donor = req.body;
+        const {
+            uid,
+            name,
+            email,
+            number,
+            bloodGroup,
+            district,
+            upazila,
+        } = req.body;
 
-        if (!donor || !donor.uid || !donor.email) {
+        if (!uid || !email) {
             return res.status(400).send({
                 message: "Required donor information is missing",
             });
         }
+
+        // Prevent duplicate donor profiles
+        const existingDonor = await bloodDonationCollection.findOne({ uid });
+
+        if (existingDonor) {
+            return res.status(409).send({
+                message: "Donor profile already exists",
+            });
+        }
+
+        const donor = {
+            uid,
+            name,
+            email,
+            number,
+            bloodGroup,
+            district,
+            upazila,
+
+            // Every new donor starts as available
+            available: true,
+        };
 
         const result = await bloodDonationCollection.insertOne(donor);
 
@@ -96,10 +132,14 @@ app.post("/donors", async (req, res) => {
             success: true,
             message: "Donor saved successfully",
             insertedId: result.insertedId,
+            available: true,
         });
     } catch (error) {
         console.error("Failed to save donor:", error);
-        res.status(500).send({ message: "Failed to save donor" });
+
+        res.status(500).send({
+            message: "Failed to save donor",
+        });
     }
 });
 
@@ -116,25 +156,62 @@ app.get("/donors/uid/:uid", async (req, res) => {
             });
         }
 
+        // Treat older documents without availability as available
+        if (typeof donor.available !== "boolean") {
+            donor.available = true;
+        }
+
         res.send(donor);
     } catch (error) {
-        console.error(error);
+        console.error("Failed to get donor profile:", error);
+
         res.status(500).send({
             message: "Failed to get donor profile",
         });
     }
 });
 
-// Update donor profile
+// Update donor profile and/or availability
 app.patch("/donors/uid/:uid", async (req, res) => {
     try {
-        const { name, number, bloodGroup, district, upazila } = req.body;
+        const {
+            name,
+            number,
+            bloodGroup,
+            district,
+            upazila,
+            available,
+        } = req.body;
+
+        const updateFields = {};
+
+        // Update only fields explicitly provided
+        if (name !== undefined) updateFields.name = name;
+        if (number !== undefined) updateFields.number = number;
+        if (bloodGroup !== undefined) updateFields.bloodGroup = bloodGroup;
+        if (district !== undefined) updateFields.district = district;
+        if (upazila !== undefined) updateFields.upazila = upazila;
+
+        // Availability must be a real Boolean
+        if (available !== undefined) {
+            if (typeof available !== "boolean") {
+                return res.status(400).send({
+                    message: "Availability must be true or false",
+                });
+            }
+
+            updateFields.available = available;
+        }
+
+        if (Object.keys(updateFields).length === 0) {
+            return res.status(400).send({
+                message: "No valid fields provided for update",
+            });
+        }
 
         const result = await bloodDonationCollection.updateOne(
             { uid: req.params.uid },
-            {
-                $set: { name, number, bloodGroup, district, upazila },
-            }
+            { $set: updateFields }
         );
 
         if (result.matchedCount === 0) {
@@ -145,12 +222,14 @@ app.patch("/donors/uid/:uid", async (req, res) => {
 
         res.send({
             success: true,
-            message: "Profile updated successfully",
+            message: "Donor profile updated successfully",
+            updatedFields: updateFields,
         });
     } catch (error) {
-        console.error(error);
+        console.error("Failed to update donor profile:", error);
+
         res.status(500).send({
-            message: "Failed to update profile",
+            message: "Failed to update donor profile",
         });
     }
 });
@@ -173,7 +252,8 @@ app.delete("/donors/uid/:uid", async (req, res) => {
             message: "Donor profile deleted successfully",
         });
     } catch (error) {
-        console.error(error);
+        console.error("Failed to delete donor profile:", error);
+
         res.status(500).send({
             message: "Failed to delete donor profile",
         });
